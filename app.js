@@ -1,6 +1,8 @@
 import bcrypt from 'bcrypt';
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import cors from 'cors';
+
 const app = express();
 
 //connect db
@@ -14,6 +16,7 @@ import Messages from './models/Messages.js';
 //
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+app.use(cors());
 const port = process.env.PORT || 5000;
 
 //Routes
@@ -113,7 +116,7 @@ app.post('/api/login', async (req, res) => {
 	}
 });
 
-app.post('/api/conversations', async (req, res) => {
+app.post('/api/conversation', async (req, res) => {
 	try {
 		const { senderId, receiverId } = req.body;
 		const newConversation = new Conversations({
@@ -145,7 +148,24 @@ app.get('/api/conversations/:userId', async (req, res) =>{
 
 app.post('/api/message', async (req, res) =>{
 	try {
-		const {conversationId, senderId, message}=req.body;
+		const {conversationId, senderId, message, receiverId =''}=req.body;
+
+		if(!senderId || !message){
+			return res.status(400).json({message: 'Please fill all required fields'})
+		}
+		if (!conversationId && receiverId) {
+			const newConversation = new Conversations({
+				members: [senderId, receiverId],
+			});
+			await newConversation.save();
+
+			const newMessage = new Messages({conversationId: newConversation._id, senderId, message})
+			await newMessage.save();
+			return res.status(200).json({message: 'Message sent successfully'})
+		}else if(!conversationId && !receiverId){
+			return res.status(200).json({message: 'Please fill all required fields'})
+		}
+
 		const newMessage = new Messages({conversationId, senderId, message});
 		await newMessage.save();
 		res.status(200).json({message: 'Message sent successfully'});
@@ -154,13 +174,47 @@ app.post('/api/message', async (req, res) =>{
 	}
 })
 
-app.get('/api/message/:conversationId', async() =>{
+app.get('/api/message/:conversationId', async (req, res) => {
 	try {
-		
+		const conversationId = req.params.conversationId;
+
+		if (conversationId === 'new') {
+			return res.status(200).json([]);
+		}
+		const messages = await Messages.find({ conversationId });
+		const messageUserData = await Promise.all(
+			messages.map(async (message) => {
+				const user = await Users.findById(message.senderId);
+				return {
+					user: { email: user.email, fullName: user.fullName },
+					message: message.message
+				};
+			})
+		);
+		res.json(messageUserData); // Send the response back
+	} catch (error) {
+		console.error(error);
+		res.status(500).send('Internal Server Error'); // Send an error response
+	}
+});
+
+app.get('/api/users', async(req, res) =>{
+	try {
+		const users = await Users.find();
+		const userData = await Promise.all(
+			users.map(async (user) => {
+				return {
+					user: { email: user.email, fullName: user.fullName },
+					userId: user?._id
+				};
+			})
+		);
+		res.status(200).json(userData);
 	} catch (error) {
 		console.error(error);
 	}
 })
+
 
 app.listen(port, () => {
 	console.log(`Server is running on port ${port}`);
